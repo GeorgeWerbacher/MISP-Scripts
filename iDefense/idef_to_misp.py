@@ -72,6 +72,7 @@ if __name__ == "__main__":
             # PHISH (attribute - email-src)
             elif indicators['type'] == 'phish':
                 phish = indicators['key']
+                print 'Phishing Campaign'
                 print phish
 
             # MALWARE FAMILY (no attribute)
