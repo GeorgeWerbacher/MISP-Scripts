@@ -1,5 +1,6 @@
 import requests
 import keys
+import dateutil.parser
 from pymisp import PyMISP
 misp = PyMISP(keys.misp_url, keys.misp_key, False, 'json')
 
@@ -93,79 +94,186 @@ def get_ip(event, url):
         misp.add_ipdst(event, ipdst=data['key'])
 
 
-def import_intelligence_alert(url, case_name, case_date):
-    event = misp.new_event(1, 4, 0, info='Intelligence Alert: %s' % case_name, date=case_date)
+def get_attributes(indicators, event):
+    # COUNTRY
+    if indicators['type'] == 'country':
+        country = indicators['key']
+        misp.add_named_attribute(event, 'Attribution', 'comment', country, comment='Country')  # Created Attribution
+        country_url = keys.idef_base_url + indicators['href']
+        region = get_region(country_url)
+        tag = region + ':' + country  # Adds Tag
+        misp.new_tag(tag, exportable=True)
+        misp.add_tag(event, tag)
+
+    # REGION
+    if indicators['type'] == 'region':
+        region = indicators['key']
+        misp.add_named_attribute(event, 'Attribution', 'comment', region, comment='Region')
+        misp.new_tag(region)
+        misp.add_tag(event, region)
+
+    # DETECTION_SIGNATURE
+    if indicators['type'] == 'detection_signature':
+        detection_url = keys.idef_base_url + indicators['href']
+        get_detection_signature(event, url=detection_url)
+
+    # DOMAIN
+    if indicators['type'] == 'domain':
+        domain_url = keys.idef_base_url + indicators['href']
+        get_domain(event, domain_url)
+
+    # FILE
+    if indicators['type'] == 'file':
+        file = indicators['key']
+        file_url = keys.idef_base_url + indicators['href']
+        misp.add_hashes(event, md5=file, comment=get_file(event, url=file_url))
+
+    # GLOBAL EVENT
+    if indicators['type'] == 'global_event':
+        global_url = keys.idef_base_url + indicators['href']
+        get_global_event(event, global_url)
+
+    # IP
+    if indicators['type'] == 'ip':
+        ip_url = keys.idef_base_url + indicators['href']
+        get_ip(event, ip_url)
+
+    # MALICIOUS EVENT
+    if indicators['type'] == 'malicious_event':
+        print 'Getting Malicious Event'
+        event_url = keys.idef_base_url + indicators['href']
+        print event_url
+        import_malicious_event(event_url)
+
+    # THREAT ACTOR
+    if indicators['type'] == 'threat_actor':
+        actor_url = keys.idef_base_url + indicators['href']
+        import_threat_actor(actor_url)
+
+
+def search_events(case_name):
+    search = misp.search_index(eventinfo=case_name)
+    try:
+        event_id = (search['response'][0]['id'])
+        event_id = int(event_id.encode('utf8'))
+        if event_id != {}:
+            return event_id
+    except IndexError:
+        return
+
+
+def import_threat_actor(url):
     data = get_document(url)
 
-    # ANALYSIS
-    description = data['results'][0]['analysis']
-    misp.add_named_attribute(event, 'External analysis', 'comment', value=description, comment='Analysis')
+    event_name = data['key']
+    event_name = event_name.encode('utf8')
+    event_date = dateutil.parser.parse(data['created_on'])
+    event_date = event_date.strftime('%Y-%m-%d')
 
-    # MITIGATION
-    try:
-        mitigation = data['results'][0]['mitigation']
-        misp.add_named_attribute(event, 'External analysis', 'comment', value=mitigation, comment='Mitigation')
-    except KeyError:
-        pass
+    if search_events(event_name) is not None:
+        print 'Actor Already Exists..'
+    else:
+        event = misp.new_event(1, 4, 0, info='Threat Actor: %s' % event_name, date=event_date)
 
-    # THREAT TYPES
-    for type in data['results'][0]['threat_types']:
-        if type == 'Cyber Espionage':
-            misp.add_tag(event, 'Threat Type: Cyber Espionage')
-        if type == 'Cyber Crime':
-            misp.add_domain(event, 'Threat Type: Cyber Crime')
-        if type == 'Hacktivism':
-            misp.add_tag(event, 'Threat Type: Hacktivism')
-        if type == 'Vulnerability':
-            misp.add_tag(event, 'Threat Type: Vulnerability')
+        try:
+            description = data['description']
+            misp.add_named_attribute(event, 'External analysis', 'comment', value=description, comment='Description')
+        except KeyError:
+            pass
+
+        try:
+            analysis = data['analysis']
+            misp.add_named_attribute(event, 'External analysis', 'comment', value=analysis, comment='Analysis')
+        except KeyError:
+            pass
+
+        try:
+            misp.add_named_attribute(event, 'External analysis', 'comment', value=data['capabilities'], comment='Capabilities')
+        except KeyError:
+            pass
+
+
+def import_malicious_event(url):
+    data = get_document(url)
+
+    event_name = data['title']
+    event_name = event_name.encode('utf8')
+    event_date = dateutil.parser.parse(data['created_on'])
+    event_date = event_date.strftime('%Y-%m-%d')
+
+    if search_events(event_name) is not None:
+        print 'Case already exists'
+    else:
+        event = misp.new_event(1, 4, 0, info=event_name, date=event_date)
+        # DESCRIPTION
+        description = data['description']
+        misp.add_named_attribute(event, 'External analysis', 'comment', value=description, comment='Description')
+
+        # HASHTAGS
+        try:
+            for hashtag in data['hashtags']:
+                misp.add_named_attribute(event, 'External analysis', 'link',
+                                     value='https://twitter.com/hashtag/%s?src=hash' % hashtag, comment='Hashtag: %s' % hashtag)
+        except KeyError:
+            pass
+
+        # MOTIVE
+
+        # THREAT TYPES (Not working for some reason)
+        for type in data['threat_types']:
+            if type == 'Cyber Espionage':
+                misp.add_tag(event, 'Threat Type: Cyber Espionage')
+                print 'Added Tag - Esp'
+            elif type == 'Cyber Crime':
+                misp.add_domain(event, 'Threat Type: Cyber Crime')
+                print 'Added Tag - Crime'
+            elif type == 'Hacktivism':
+                misp.add_tag(event, 'Threat Type: Hacktivism')
+                print 'Added Tag - Hack'
+            elif type == 'Vulnerability':
+                misp.add_tag(event, 'Threat Type: Vulnerability')
+            else:
+                print 'No Threat Types'
+
+        # ATTRIBUTES
+        print 'Attributes'
+        for indicators in data['links']:
+            get_attributes(indicators, event)
+
+
+def import_intelligence_alert(url, case_name, case_date):
+    if search_events(case_name) is not None:
+        print 'Event already exists'
+    else:
+        event = misp.new_event(1, 4, 0, info='Intelligence Alert: %s' % case_name, date=case_date)
+        data = get_document(url)
+
+        # ANALYSIS
+        misp.add_named_attribute(event, 'External analysis', 'comment', value=data['results'][0]['analysis'], comment='Analysis')
+
+        # MITIGATION
+        try:
+            misp.add_named_attribute(event, 'External analysis', 'comment', value=data['results'][0]['mitigation'], comment='Mitigation')
+        except KeyError:
+            pass
+
+        # THREAT TYPES
+        for type in data['results'][0]['threat_types']:
+            if type == 'Cyber Espionage':
+                misp.add_tag(event, 'Threat Type: Cyber Espionage')
+            if type == 'Cyber Crime':
+                misp.add_domain(event, 'Threat Type: Cyber Crime')
+            if type == 'Hacktivism':
+                misp.add_tag(event, 'Threat Type: Hacktivism')
+            if type == 'Vulnerability':
+                misp.add_tag(event, 'Threat Type: Vulnerability')
 
     # ATTRIBUTES
-    for indicators in data['results'][0]['links']:
-
-        # COUNTRY
-        if indicators['type'] == 'country':
-            country = indicators['key']
-            misp.add_named_attribute(event, 'Attribution', 'comment', country, comment='Country')   # Created Attribution
-            country_url = keys.idef_base_url + indicators['href']
-            region = get_region(country_url)
-            tag = region + ':' + country        # Adds Tag
-            misp.new_tag(tag,exportable=True)
-            misp.add_tag(event, tag)
-
-        # REGION
-        if indicators['type'] == 'region':
-            region = indicators['key']
-            misp.add_named_attribute(event, 'Attribution', 'comment', region, comment='Region')
-            misp.new_tag(region)
-            misp.add_tag(event, region)
-
-        # DETECTION_SIGNATURE (change up because of MISP YARA and SNORT)
-        if indicators['type'] == 'detection_signature':
-            detection_url = keys.idef_base_url + indicators['href']
-            get_detection_signature(event, url=detection_url)
-
-        # DOMAIN
-        if indicators['type'] == 'domain':
-            domain_url = keys.idef_base_url + indicators['href']
-            get_domain(event, domain_url)
-
-        # FILE
-        if indicators['type'] == 'file':
-            file = indicators['key']
-            file_url = keys.idef_base_url + indicators['href']
-            misp.add_hashes(event, md5=file, comment=get_file(event, url=file_url))
-
-        # GLOBAL EVENT
-        if indicators['type'] == 'global_event':
-            global_url = keys.idef_base_url + indicators['href']
-            get_global_event(event, global_url)
-
-        # IP
-        if indicators['type'] == 'ip':
-            ip_url = keys.idef_base_url + indicators['href']
-            get_ip(event, ip_url)
-
-        # MALICIOUS EVENT
+        try:
+            for indicators in data['results'][0]['links']:
+                get_attributes(indicators, event)
+        except KeyError:
+            pass
 
 
 
