@@ -11,7 +11,7 @@ import dateutil.parser
 from termcolor import colored
 import idefense_export
 
-document_url = 'https://api.intelgraph.verisign.com/rest/document/v0/intelligence_alert?page=202&page_size=1'
+document_url = 'https://api.intelgraph.verisign.com/rest/document/v0/intelligence_alert?links.key.exists=true&links.type.values=threat_actor&page=1&page_size=1'
 data = idefense_export.get_document(document_url)
 data = idefense_export.get_document(document_url)
 case_name = data['results'][0]['title']

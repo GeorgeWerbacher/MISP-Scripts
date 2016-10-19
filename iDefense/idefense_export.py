@@ -1,6 +1,7 @@
 import requests
 import keys
 import dateutil.parser
+import json
 from pymisp import PyMISP
 misp = PyMISP(keys.misp_url, keys.misp_key, False, 'json')
 
@@ -148,6 +149,8 @@ def get_attributes(indicators, event):
     # THREAT ACTOR
     if indicators['type'] == 'threat_actor':
         actor_url = keys.idef_base_url + indicators['href']
+        print actor_url
+        misp.add_threat_actor(event, target=indicators['key'])
         import_threat_actor(actor_url)
 
 
@@ -175,22 +178,89 @@ def import_threat_actor(url):
     else:
         event = misp.new_event(1, 4, 0, info='Threat Actor: %s' % event_name, date=event_date)
 
+        # DESCRIPTION
         try:
             description = data['description']
             misp.add_named_attribute(event, 'External analysis', 'comment', value=description, comment='Description')
         except KeyError:
             pass
 
+        # ANALYSIS
         try:
             analysis = data['analysis']
             misp.add_named_attribute(event, 'External analysis', 'comment', value=analysis, comment='Analysis')
         except KeyError:
             pass
 
+        # CAPABILITIES
         try:
             misp.add_named_attribute(event, 'External analysis', 'comment', value=data['capabilities'], comment='Capabilities')
         except KeyError:
             pass
+
+        # SOURCES
+        try:
+            for sources in data['sources_external']:
+                misp.add_named_attribute(event, 'External analysis', 'link', value=sources['url'], comment=sources['description'])
+        except KeyError:
+            pass
+
+        # THREAT TYPES
+        try:
+            for type in data['threat_types']:
+                if type == 'Cyber Espionage':
+                    misp.add_tag(event, 'Threat Type: Cyber Espionage')
+                    print 'Added Tag - Esp'
+                elif type == 'Cyber Crime':
+                    misp.add_domain(event, 'Threat Type: Cyber Crime')
+                    print 'Added Tag - Crime'
+                elif type == 'Hacktivism':
+                    misp.add_tag(event, 'Threat Type: Hacktivism')
+                    print 'Added Tag - Hack'
+                elif type == 'Vulnerability':
+                    misp.add_tag(event, 'Threat Type: Vulnerability')
+                else:
+                    print 'No Threat Types'
+        except KeyError:
+            pass
+
+        # SKILL LEVEL
+        try:
+            misp.add_named_attribute(event, 'External analysis', 'comment', value=data['skill_lvl'], comment='Skill Level')
+        except KeyError:
+            pass
+
+        # TTPs
+        try:
+            for ttp in data['ttps']:
+                misp.add_named_attribute(event, 'External analysis', 'comment', value=ttp, comment='TTP')
+        except KeyError:
+            pass
+
+        # REAL NAME
+        try:
+            misp.add_named_attribute(event, 'External analysis', 'text', value=data['real_name'], comment='Real Name')
+        except KeyError:
+            pass
+
+        # ALIAS
+        try:
+            for attributes in data['links']:
+                if attributes['relationship'] == 'alias':
+                    misp.add_threat_actor(event, target=attributes['key'], comment='Alias')
+        except KeyError:
+            pass
+
+        # ADDITIONIAL ATTRIBUTES
+        try:
+            for indicators in data['results'][0]['links']:
+                get_attributes(indicators, event)
+        except KeyError:
+            pass
+
+        # ADDS THREAT ACTOR ATTRIBUTE
+        misp.add_threat_actor(event, target=event_name)
+        misp.add_tag(event, tag='Threat Actor')
 
 
 def import_malicious_event(url):
@@ -209,6 +279,7 @@ def import_malicious_event(url):
         description = data['description']
         misp.add_named_attribute(event, 'External analysis', 'comment', value=description, comment='Description')
 
+        '''
         # HASHTAGS
         try:
             for hashtag in data['hashtags']:
@@ -216,8 +287,7 @@ def import_malicious_event(url):
                                      value='https://twitter.com/hashtag/%s?src=hash' % hashtag, comment='Hashtag: %s' % hashtag)
         except KeyError:
             pass
-
-        # MOTIVE
+        '''
 
         # THREAT TYPES (Not working for some reason)
         for type in data['threat_types']:
@@ -239,6 +309,8 @@ def import_malicious_event(url):
         print 'Attributes'
         for indicators in data['links']:
             get_attributes(indicators, event)
+
+        misp.add_tag(event, tag='Malicious Event')
 
 
 def import_intelligence_alert(url, case_name, case_date):
@@ -275,6 +347,7 @@ def import_intelligence_alert(url, case_name, case_date):
         except KeyError:
             pass
 
+        misp.add_tag(event, tag='Intelligence Alert')
 
 
 
